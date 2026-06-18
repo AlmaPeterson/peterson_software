@@ -181,11 +181,19 @@ func saveUploadedFile(slug, version string, fh *multipart.FileHeader) (filename 
 	defer dest.Close()
 
 	size, err = io.Copy(dest, src)
+	if err != nil {
+		// Don't leave a truncated file on disk if the upload was interrupted.
+		os.Remove(destPath)
+		return "", 0, err
+	}
 	return filename, size, err
 }
 
 func UploadApp(w http.ResponseWriter, r *http.Request) {
-	r.ParseMultipartForm(500 << 20) // 500MB
+	if err := r.ParseMultipartForm(500 << 20); err != nil { // 500MB
+		http.Error(w, "Failed to read upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	name := r.FormValue("name")
 	version := r.FormValue("version")
@@ -249,7 +257,10 @@ func UploadApp(w http.ResponseWriter, r *http.Request) {
 
 // UploadAppFile adds one more platform-specific file to an existing software entry.
 func UploadAppFile(w http.ResponseWriter, r *http.Request, appID int64) {
-	r.ParseMultipartForm(500 << 20)
+	if err := r.ParseMultipartForm(500 << 20); err != nil {
+		http.Error(w, "Failed to read upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var slug, version string
 	err := db.DB.QueryRow("SELECT slug, version FROM apps WHERE id=?", appID).Scan(&slug, &version)
@@ -273,7 +284,12 @@ func UploadAppFile(w http.ResponseWriter, r *http.Request, appID int64) {
 		return
 	}
 	defer dest.Close()
-	size, _ := io.Copy(dest, file)
+	size, err := io.Copy(dest, file)
+	if err != nil {
+		os.Remove(destPath)
+		http.Error(w, "Upload was interrupted before it finished", http.StatusBadRequest)
+		return
+	}
 
 	platform := detectPlatform(header.Filename)
 	res, err := db.DB.Exec(
