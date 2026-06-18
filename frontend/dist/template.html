@@ -16,20 +16,15 @@
       </div>
     </header>
 
-    <main class="container" style="padding-bottom: 60px;">
-      <div class="page-header">
-        <h1 class="page-title">Software Releases</h1>
-        <p class="page-subtitle">Download the latest builds for all platforms.</p>
+    <main class="container" style="padding-top: 36px; padding-bottom: 60px; max-width: 720px;">
+      <p class="skeleton" id="loading">Loading…</p>
+      <div id="app-detail" style="display: none;"></div>
+      <div id="not-found" class="card" style="display: none; padding: 32px; text-align: center;">
+        <p style="color: var(--text2);">This software couldn't be found.</p>
       </div>
-
-      <div style="margin-bottom: 20px;">
-        <div class="segmented" id="filters" role="tablist" aria-label="Filter by platform"></div>
-      </div>
-
-      <p class="skeleton" id="loading">Loading releases…</p>
-      <div class="app-grid" id="app-grid" style="display: none;"></div>
+      <a href="index.html" class="back-link">← Back to all software</a>
     </main>
 
-    <script type="module" src="js/home.js"></script>
+    <script type="module" src="js/template.js"></script>
   </body>
 </html>

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"peterson-software/db"
@@ -38,11 +39,19 @@ func main() {
 	// App listing (optional auth — shows private apps if logged in)
 	mux.Handle("/api/apps", middleware.OptionalAuth(http.HandlerFunc(handlers.ListApps)))
 
-	// Download (optional auth — private files require auth)
+	// App detail + per-platform download (optional auth — private apps require auth)
 	mux.Handle("/api/apps/", middleware.OptionalAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/download") {
-			handlers.DownloadApp(w, r)
-		} else {
+		rest := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/"), "/")
+		switch len(rest) {
+		case 1:
+			handlers.GetApp(w, r, rest[0])
+		case 3:
+			if rest[1] == "download" {
+				handlers.DownloadApp(w, r, rest[0], rest[2])
+				return
+			}
+			http.NotFound(w, r)
+		default:
 			http.NotFound(w, r)
 		}
 	})))
@@ -51,6 +60,29 @@ func main() {
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("/api/admin/apps/upload", handlers.UploadApp)
 	adminMux.HandleFunc("/api/admin/apps/delete/", handlers.DeleteApp)
+	adminMux.HandleFunc("/api/admin/apps/", func(w http.ResponseWriter, r *http.Request) {
+		// /api/admin/apps/{id}/files — add a platform-specific file to an existing software entry
+		rest := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/apps/"), "/"), "/")
+		if len(rest) == 2 && rest[1] == "files" {
+			id, err := strconv.ParseInt(rest[0], 10, 64)
+			if err != nil {
+				http.Error(w, "Invalid ID", http.StatusBadRequest)
+				return
+			}
+			handlers.UploadAppFile(w, r, id)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	adminMux.HandleFunc("/api/admin/releases/", func(w http.ResponseWriter, r *http.Request) {
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/admin/releases/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid ID", http.StatusBadRequest)
+			return
+		}
+		handlers.DeleteRelease(w, r, id)
+	})
 	adminMux.HandleFunc("/api/admin/users", handlers.ListUsers)
 	adminMux.HandleFunc("/api/admin/users/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/role") {
@@ -76,6 +108,6 @@ func main() {
 		fs.ServeHTTP(w, r)
 	})
 
-	log.Println("Peterson Software running on http://localhost:443")
-	log.Fatal(http.ListenAndServe(":443", corsMiddleware(mux)))
+	log.Println("Peterson Software running on http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
 }

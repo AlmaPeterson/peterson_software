@@ -1,0 +1,233 @@
+import { api } from './api.js'
+import { initNav } from './nav.js'
+
+const PLATFORM_ICONS = { android: '🤖', ios: '🍎', windows: '🪟', mac: '🍏', linux: '🐧', other: '📦' }
+const EXTENSION_PLATFORMS = {
+  apk: 'Android', aab: 'Android',
+  ipa: 'iOS',
+  exe: 'Windows', msi: 'Windows',
+  dmg: 'Mac', pkg: 'Mac',
+  deb: 'Linux', rpm: 'Linux', appimage: 'Linux',
+}
+
+function detectPlatformClient(filename) {
+  const ext = filename.toLowerCase().split('.').pop()
+  return EXTENSION_PLATFORMS[ext] || 'Other'
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div')
+  div.textContent = str
+  return div.innerHTML
+}
+
+let apps = []
+let users = []
+
+async function loadApps() {
+  try {
+    apps = await api.getApps()
+  } catch (err) {
+    console.error(err)
+  }
+  renderApps()
+}
+
+async function loadUsers() {
+  try {
+    users = await api.getUsers()
+  } catch (err) {
+    console.error(err)
+  }
+  renderUsers()
+}
+
+function renderApps() {
+  document.getElementById('releases-title').textContent = `Software (${apps.length})`
+  const list = document.getElementById('apps-list')
+
+  if (apps.length === 0) {
+    list.innerHTML = '<div class="list-row-empty">No software uploaded yet.</div>'
+    return
+  }
+
+  list.innerHTML = apps.map(app => {
+    const badges = app.releases.map(rel => {
+      const p = rel.platform.toLowerCase()
+      const icon = PLATFORM_ICONS[p] || '📦'
+      return `
+        <span class="badge badge-${p}" style="display: inline-flex; align-items: center; gap: 4px;">
+          ${icon} ${escapeHtml(rel.platform)}
+          <button class="release-delete-btn" data-release-id="${rel.id}" title="Remove ${escapeHtml(rel.platform)} file"
+            style="background: none; border: none; color: inherit; cursor: pointer; font-size: 0.95em; line-height: 1; padding: 0;">×</button>
+        </span>
+      `
+    }).join('')
+
+    return `
+      <div class="list-row" style="align-items: flex-start; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 220px;">
+          <div style="margin-bottom: 8px;">
+            <span style="font-weight: 600; font-size: 0.94rem;">${escapeHtml(app.name)}</span>
+            <span style="color: var(--text2); font-size: 0.82rem; margin-left: 8px;">v${escapeHtml(app.version)}</span>
+            <span style="margin-left: 8px;" class="badge ${app.is_public ? 'badge-public' : 'badge-lock'}">${app.is_public ? 'Public' : 'Private'}</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+            ${badges}
+            <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+              + Add File
+              <input type="file" class="add-file-input" data-app-id="${app.id}" style="display: none;" />
+            </label>
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm delete-app-btn" data-id="${app.id}">Delete</button>
+      </div>
+    `
+  }).join('')
+
+  list.querySelectorAll('.delete-app-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this software and all its files?')) return
+      await api.deleteApp(btn.dataset.id)
+      loadApps()
+    })
+  })
+
+  list.querySelectorAll('.release-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this file?')) return
+      await api.deleteRelease(btn.dataset.releaseId)
+      loadApps()
+    })
+  })
+
+  list.querySelectorAll('.add-file-input').forEach(input => {
+    input.addEventListener('change', async () => {
+      const file = input.files[0]
+      if (!file) return
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        await api.addAppFile(input.dataset.appId, fd)
+        loadApps()
+      } catch (err) {
+        alert(err.message)
+      }
+    })
+  })
+}
+
+function renderUsers() {
+  document.getElementById('users-title').textContent = `Users (${users.length})`
+  const list = document.getElementById('users-list')
+  const pendingCount = users.filter(u => u.role === 'pending').length
+  const badge = document.getElementById('pending-badge')
+  if (pendingCount > 0) {
+    badge.textContent = String(pendingCount)
+    badge.style.display = 'inline'
+  } else {
+    badge.style.display = 'none'
+  }
+
+  if (users.length === 0) {
+    list.innerHTML = '<div class="list-row-empty">No users yet.</div>'
+    return
+  }
+
+  list.innerHTML = users.map(u => `
+    <div class="list-row" style="flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 160px;">
+        <span style="font-weight: 600; font-size: 0.94rem;">${escapeHtml(u.username)}</span>
+        <span style="color: var(--text2); font-size: 0.82rem; margin-left: 8px;">${escapeHtml(u.email)}</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <select class="role-select" data-id="${u.id}" style="width: auto; padding: 6px 10px; font-size: 0.82rem;">
+          <option value="pending" ${u.role === 'pending' ? 'selected' : ''}>Pending</option>
+          <option value="user" ${u.role === 'user' ? 'selected' : ''}>User</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+        ${u.role !== 'admin' ? `<button class="btn btn-danger btn-sm remove-user-btn" data-id="${u.id}">Remove</button>` : ''}
+      </div>
+    </div>
+  `).join('')
+
+  list.querySelectorAll('.role-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      await api.updateRole(sel.dataset.id, sel.value)
+      loadUsers()
+    })
+  })
+
+  list.querySelectorAll('.remove-user-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this user?')) return
+      await api.deleteUser(btn.dataset.id)
+      loadUsers()
+    })
+  })
+}
+
+function setTab(tab) {
+  document.getElementById('tab-apps').classList.toggle('is-active', tab === 'apps')
+  document.getElementById('tab-apps').setAttribute('aria-selected', tab === 'apps')
+  document.getElementById('tab-users').classList.toggle('is-active', tab === 'users')
+  document.getElementById('tab-users').setAttribute('aria-selected', tab === 'users')
+  document.getElementById('panel-apps').style.display = tab === 'apps' ? '' : 'none'
+  document.getElementById('panel-users').style.display = tab === 'users' ? '' : 'none'
+}
+
+document.getElementById('tab-apps').addEventListener('click', () => setTab('apps'))
+document.getElementById('tab-users').addEventListener('click', () => setTab('users'))
+
+document.getElementById('up-files').addEventListener('change', (e) => {
+  const preview = document.getElementById('file-preview')
+  const files = Array.from(e.target.files)
+  preview.innerHTML = files.map(f => {
+    const platform = detectPlatformClient(f.name)
+    const icon = PLATFORM_ICONS[platform.toLowerCase()] || '📦'
+    return `<span class="badge badge-${platform.toLowerCase()}">${icon} ${platform} · ${escapeHtml(f.name)}</span>`
+  }).join('')
+})
+
+const uploadForm = document.getElementById('upload-form')
+const uploadError = document.getElementById('upload-error')
+const uploadSubmit = document.getElementById('upload-submit')
+
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const filesInput = document.getElementById('up-files')
+  if (!filesInput.files.length) {
+    uploadError.textContent = 'Please select at least one file'
+    uploadError.style.display = 'block'
+    return
+  }
+  uploadError.style.display = 'none'
+  uploadSubmit.disabled = true
+  uploadSubmit.textContent = 'Uploading…'
+
+  const fd = new FormData(uploadForm)
+  try {
+    await api.uploadApp(fd)
+    uploadForm.reset()
+    document.getElementById('file-preview').innerHTML = ''
+    loadApps()
+  } catch (err) {
+    uploadError.textContent = err.message
+    uploadError.style.display = 'block'
+  } finally {
+    uploadSubmit.disabled = false
+    uploadSubmit.textContent = 'Upload Software'
+  }
+})
+
+async function main() {
+  const user = await initNav()
+  if (!user || user.role !== 'admin') {
+    window.location.href = 'login.html'
+    return
+  }
+  loadApps()
+  loadUsers()
+}
+
+main()
