@@ -94,13 +94,18 @@ func main() {
 	})
 	mux.Handle("/api/admin/", middleware.Auth(middleware.AdminOnly(adminMux)))
 
-	// Serve built React frontend
+	// Serve static frontend
 	fs := http.FileServer(http.Dir("../frontend/dist"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			http.NotFound(w, r)
 			return
 		}
+		// Force revalidation so deployed HTML/CSS/JS changes are never served
+		// stale from a browser cache (there's no cache-busting/versioning on
+		// these filenames, so without this a redeploy can silently appear to
+		// do nothing client-side).
+		w.Header().Set("Cache-Control", "no-cache")
 		// SPA fallback
 		if _, err := os.Stat("../frontend/dist" + r.URL.Path); os.IsNotExist(err) {
 			http.ServeFile(w, r, "../frontend/dist/index.html")
