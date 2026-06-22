@@ -27,6 +27,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 func main() {
 	os.MkdirAll("releases", 0755)
+	os.MkdirAll("icons", 0755)
 	db.Init("../data.db")
 
 	mux := http.NewServeMux()
@@ -61,18 +62,25 @@ func main() {
 	adminMux.HandleFunc("/api/admin/apps", handlers.CreateApp)
 	adminMux.HandleFunc("/api/admin/apps/delete/", handlers.DeleteApp)
 	adminMux.HandleFunc("/api/admin/apps/", func(w http.ResponseWriter, r *http.Request) {
-		// /api/admin/apps/{id}/files/chunk — append one chunk of a file upload to an app
 		rest := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/apps/"), "/"), "/")
-		if len(rest) == 3 && rest[1] == "files" && rest[2] == "chunk" {
-			id, err := strconv.ParseInt(rest[0], 10, 64)
-			if err != nil {
-				http.Error(w, "Invalid ID", http.StatusBadRequest)
-				return
-			}
-			handlers.UploadChunk(w, r, id)
+		id, err := strconv.ParseInt(rest[0], 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid ID", http.StatusBadRequest)
 			return
 		}
-		http.NotFound(w, r)
+		switch {
+		case len(rest) == 1:
+			// /api/admin/apps/{id} — edit name/version/description/visibility
+			handlers.UpdateApp(w, r, id)
+		case len(rest) == 2 && rest[1] == "icon":
+			// /api/admin/apps/{id}/icon — replace the icon image
+			handlers.UploadIcon(w, r, id)
+		case len(rest) == 3 && rest[1] == "files" && rest[2] == "chunk":
+			// /api/admin/apps/{id}/files/chunk — append one chunk of a file upload
+			handlers.UploadChunk(w, r, id)
+		default:
+			http.NotFound(w, r)
+		}
 	})
 	adminMux.HandleFunc("/api/admin/releases/", func(w http.ResponseWriter, r *http.Request) {
 		idStr := strings.TrimPrefix(r.URL.Path, "/api/admin/releases/")
@@ -93,6 +101,12 @@ func main() {
 		}
 	})
 	mux.Handle("/api/admin/", middleware.Auth(middleware.AdminOnly(adminMux)))
+
+	// App icons are served as plain public static files — unlike the
+	// installer files themselves, the icon image isn't sensitive even for
+	// private apps, and serving it directly (rather than through an
+	// authenticated handler) keeps every <img> tag in the frontend simple.
+	mux.Handle("/icons/", http.StripPrefix("/icons/", http.FileServer(http.Dir("icons"))))
 
 	// Serve static frontend
 	fs := http.FileServer(http.Dir("../frontend/dist"))

@@ -32,6 +32,7 @@ func Init(path string) {
 		description TEXT,
 		version TEXT NOT NULL,
 		is_public INTEGER NOT NULL DEFAULT 1,
+		icon_filename TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -52,6 +53,7 @@ func Init(path string) {
 	}
 
 	migrateLegacySingleFileApps()
+	addIconColumnIfMissing()
 
 	// Ensure at least one admin user exists (admin/admin123 — change after first login)
 	var count int
@@ -168,4 +170,33 @@ func migrateLegacySingleFileApps() {
 		log.Fatal("Failed to commit migration:", err)
 	}
 	log.Println("Migration complete.")
+}
+
+// addIconColumnIfMissing upgrades databases created before apps supported a
+// custom icon image. CREATE TABLE IF NOT EXISTS doesn't add columns to a
+// table that already exists, so this is needed every time a new column is
+// added to an existing table.
+func addIconColumnIfMissing() {
+	rows, err := DB.Query("PRAGMA table_info(apps)")
+	if err != nil {
+		log.Fatal("Failed to inspect apps schema:", err)
+	}
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk)
+		if name == "icon_filename" {
+			hasColumn = true
+		}
+	}
+	rows.Close()
+	if hasColumn {
+		return
+	}
+	if _, err := DB.Exec(`ALTER TABLE apps ADD COLUMN icon_filename TEXT DEFAULT ''`); err != nil {
+		log.Fatal("Failed to add icon_filename column:", err)
+	}
 }

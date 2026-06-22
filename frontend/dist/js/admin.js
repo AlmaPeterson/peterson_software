@@ -50,6 +50,7 @@ async function uploadFileInChunks(appId, file, onProgress) {
 
 let apps = []
 let users = []
+let editingAppId = null
 
 async function loadApps() {
   try {
@@ -78,45 +79,20 @@ function renderApps() {
     return
   }
 
-  list.innerHTML = apps.map(app => {
-    const badges = app.releases.map(rel => {
-      const p = rel.platform.toLowerCase()
-      const icon = PLATFORM_ICONS[p] || '📦'
-      return `
-        <span class="badge badge-${p}" style="display: inline-flex; align-items: center; gap: 4px;">
-          ${icon} ${escapeHtml(rel.platform)}
-          <button class="release-delete-btn" data-release-id="${rel.id}" title="Remove ${escapeHtml(rel.platform)} file"
-            style="background: none; border: none; color: inherit; cursor: pointer; font-size: 0.95em; line-height: 1; padding: 0;">×</button>
-        </span>
-      `
-    }).join('')
-
-    return `
-      <div class="list-row" style="align-items: flex-start; flex-wrap: wrap;">
-        <div style="flex: 1; min-width: 220px;">
-          <div style="margin-bottom: 8px;">
-            <span style="font-weight: 600; font-size: 0.94rem;">${escapeHtml(app.name)}</span>
-            <span style="color: var(--text2); font-size: 0.82rem; margin-left: 8px;">v${escapeHtml(app.version)}</span>
-            <span style="margin-left: 8px;" class="badge ${app.is_public ? 'badge-public' : 'badge-lock'}">${app.is_public ? 'Public' : 'Private'}</span>
-          </div>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
-            ${badges}
-            <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
-              + Add File
-              <input type="file" class="add-file-input" data-app-id="${app.id}" style="display: none;" />
-            </label>
-          </div>
-        </div>
-        <button class="btn btn-danger btn-sm delete-app-btn" data-id="${app.id}">Delete</button>
-      </div>
-    `
-  }).join('')
+  list.innerHTML = apps.map(app => app.id === editingAppId ? renderEditForm(app) : renderAppRow(app)).join('')
 
   list.querySelectorAll('.delete-app-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm('Delete this software and all its files?')) return
       await api.deleteApp(btn.dataset.id)
       loadApps()
+    })
+  })
+
+  list.querySelectorAll('.edit-app-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      editingAppId = Number(btn.dataset.id)
+      renderApps()
     })
   })
 
@@ -145,6 +121,139 @@ function renderApps() {
       }
     })
   })
+
+  list.querySelectorAll('.cancel-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      editingAppId = null
+      renderApps()
+    })
+  })
+
+  list.querySelectorAll('.edit-icon-input').forEach(input => {
+    input.addEventListener('change', () => {
+      const file = input.files[0]
+      if (!file) return
+      const preview = input.closest('form').querySelector('.icon-preview')
+      preview.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="" />`
+    })
+  })
+
+  list.querySelectorAll('.edit-app-form').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const appId = form.dataset.appId
+      const saveBtn = form.querySelector('.save-edit-btn')
+      saveBtn.disabled = true
+      saveBtn.textContent = 'Saving…'
+      try {
+        await api.updateApp(appId, {
+          name: form.querySelector('.edit-name').value,
+          version: form.querySelector('.edit-version').value,
+          description: form.querySelector('.edit-description').value,
+          is_public: form.querySelector('.edit-visibility').value === 'true',
+        })
+        const iconFile = form.querySelector('.edit-icon-input').files[0]
+        if (iconFile) {
+          const fd = new FormData()
+          fd.append('icon', iconFile)
+          await api.uploadIcon(appId, fd)
+        }
+        editingAppId = null
+        loadApps()
+      } catch (err) {
+        alert(err.message)
+        saveBtn.disabled = false
+        saveBtn.textContent = 'Save'
+      }
+    })
+  })
+}
+
+function appIconHtml(app) {
+  if (app.icon_url) return `<img src="${escapeHtml(app.icon_url)}" alt="" />`
+  const platform = app.releases[0] ? app.releases[0].platform.toLowerCase() : 'other'
+  return PLATFORM_ICONS[platform] || '📦'
+}
+
+function renderAppRow(app) {
+  const badges = app.releases.map(rel => {
+    const p = rel.platform.toLowerCase()
+    const icon = PLATFORM_ICONS[p] || '📦'
+    return `
+      <span class="badge badge-${p}" style="display: inline-flex; align-items: center; gap: 4px;">
+        ${icon} ${escapeHtml(rel.platform)}
+        <button class="release-delete-btn" data-release-id="${rel.id}" title="Remove ${escapeHtml(rel.platform)} file"
+          style="background: none; border: none; color: inherit; cursor: pointer; font-size: 0.95em; line-height: 1; padding: 0;">×</button>
+      </span>
+    `
+  }).join('')
+
+  return `
+    <div class="list-row" style="align-items: flex-start; flex-wrap: wrap;">
+      <div style="display: flex; gap: 12px; flex: 1; min-width: 220px;">
+        <div class="icon-preview">${appIconHtml(app)}</div>
+        <div>
+          <div style="margin-bottom: 8px;">
+            <span style="font-weight: 600; font-size: 0.94rem;">${escapeHtml(app.name)}</span>
+            <span style="color: var(--text2); font-size: 0.82rem; margin-left: 8px;">v${escapeHtml(app.version)}</span>
+            <span style="margin-left: 8px;" class="badge ${app.is_public ? 'badge-public' : 'badge-lock'}">${app.is_public ? 'Public' : 'Private'}</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+            ${badges}
+            <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+              + Add File
+              <input type="file" class="add-file-input" data-app-id="${app.id}" style="display: none;" />
+            </label>
+          </div>
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-secondary btn-sm edit-app-btn" data-id="${app.id}">Edit</button>
+        <button class="btn btn-danger btn-sm delete-app-btn" data-id="${app.id}">Delete</button>
+      </div>
+    </div>
+  `
+}
+
+function renderEditForm(app) {
+  return `
+    <div class="list-row" style="flex-direction: column; align-items: stretch; gap: 12px;">
+      <form class="edit-app-form" data-app-id="${app.id}" style="display: grid; gap: 14px;">
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <div class="icon-preview">${appIconHtml(app)}</div>
+          <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+            Change Icon
+            <input type="file" class="edit-icon-input" accept="image/png,image/jpeg,image/webp" style="display: none;" />
+          </label>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <label class="field-label">Name *</label>
+            <input class="edit-name" value="${escapeHtml(app.name)}" required />
+          </div>
+          <div>
+            <label class="field-label">Version *</label>
+            <input class="edit-version" value="${escapeHtml(app.version)}" required />
+          </div>
+        </div>
+        <div>
+          <label class="field-label">Visibility</label>
+          <select class="edit-visibility">
+            <option value="true" ${app.is_public ? 'selected' : ''}>Public</option>
+            <option value="false" ${!app.is_public ? 'selected' : ''}>Private (login required)</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Description</label>
+          <input class="edit-description" value="${escapeHtml(app.description || '')}" placeholder="Optional short description" />
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="submit" class="btn btn-primary btn-sm save-edit-btn">Save</button>
+          <button type="button" class="btn btn-ghost btn-sm cancel-edit-btn">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `
 }
 
 function renderUsers() {
@@ -242,6 +351,17 @@ uploadForm.addEventListener('submit', async (e) => {
       description: document.getElementById('up-description').value,
       is_public: document.getElementById('up-visibility').value === 'true',
     })
+
+    const iconFile = document.getElementById('up-icon').files[0]
+    if (iconFile) {
+      try {
+        const fd = new FormData()
+        fd.append('icon', iconFile)
+        await api.uploadIcon(app.id, fd)
+      } catch (err) {
+        console.error('icon upload failed:', err)
+      }
+    }
 
     const failed = []
     for (const file of files) {

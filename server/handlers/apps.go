@@ -30,8 +30,16 @@ type App struct {
 	Description string    `json:"description"`
 	Version     string    `json:"version"`
 	IsPublic    bool      `json:"is_public"`
+	IconURL     string    `json:"icon_url"`
 	CreatedAt   time.Time `json:"created_at"`
 	Releases    []Release `json:"releases"`
+}
+
+func iconURL(iconFilename string) string {
+	if iconFilename == "" {
+		return ""
+	}
+	return "/icons/" + iconFilename
 }
 
 func slugify(s string) string {
@@ -92,9 +100,9 @@ func ListApps(w http.ResponseWriter, r *http.Request) {
 
 	// Public users only see public apps; logged-in users see all
 	if isAuthed {
-		rows, err = db.DB.Query("SELECT id, name, slug, description, version, is_public, created_at FROM apps ORDER BY created_at DESC")
+		rows, err = db.DB.Query("SELECT id, name, slug, description, version, is_public, icon_filename, created_at FROM apps ORDER BY created_at DESC")
 	} else {
-		rows, err = db.DB.Query("SELECT id, name, slug, description, version, is_public, created_at FROM apps WHERE is_public=1 ORDER BY created_at DESC")
+		rows, err = db.DB.Query("SELECT id, name, slug, description, version, is_public, icon_filename, created_at FROM apps WHERE is_public=1 ORDER BY created_at DESC")
 	}
 	if err != nil {
 		http.Error(w, "DB error", http.StatusInternalServerError)
@@ -106,8 +114,10 @@ func ListApps(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var a App
 		var isPublicInt int
-		rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Description, &a.Version, &isPublicInt, &a.CreatedAt)
+		var iconFilename string
+		rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Description, &a.Version, &isPublicInt, &iconFilename, &a.CreatedAt)
 		a.IsPublic = isPublicInt == 1
+		a.IconURL = iconURL(iconFilename)
 		a.Releases = []Release{}
 		apps = append(apps, a)
 	}
@@ -133,14 +143,16 @@ func GetApp(w http.ResponseWriter, r *http.Request, slug string) {
 
 	var a App
 	var isPublicInt int
+	var iconFilename string
 	err := db.DB.QueryRow(
-		"SELECT id, name, slug, description, version, is_public, created_at FROM apps WHERE slug=?", slug,
-	).Scan(&a.ID, &a.Name, &a.Slug, &a.Description, &a.Version, &isPublicInt, &a.CreatedAt)
+		"SELECT id, name, slug, description, version, is_public, icon_filename, created_at FROM apps WHERE slug=?", slug,
+	).Scan(&a.ID, &a.Name, &a.Slug, &a.Description, &a.Version, &isPublicInt, &iconFilename, &a.CreatedAt)
 	if err != nil {
 		http.Error(w, "App not found", http.StatusNotFound)
 		return
 	}
 	a.IsPublic = isPublicInt == 1
+	a.IconURL = iconURL(iconFilename)
 	if !a.IsPublic && !isAuthed {
 		http.Error(w, "Login required", http.StatusUnauthorized)
 		return
@@ -208,6 +220,115 @@ func CreateApp(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "slug": slug})
+}
+
+// UpdateApp edits a software entry's metadata. The slug is intentionally
+// never changed here, even if the name changes — it's part of the public
+// download/detail URLs, and silently breaking those on a rename would be
+// worse than letting the slug and display name drift apart.
+func UpdateApp(w http.ResponseWriter, r *http.Request, appID int64) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		IsPublic    bool   `json:"is_public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Version == "" {
+		http.Error(w, "name and version are required", http.StatusBadRequest)
+		return
+	}
+
+	isPublic := 0
+	if req.IsPublic {
+		isPublic = 1
+	}
+
+	res, err := db.DB.Exec(
+		"UPDATE apps SET name=?, version=?, description=?, is_public=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+		req.Name, req.Version, req.Description, isPublic, appID,
+	)
+	if err != nil {
+		http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "App not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+var allowedIconExt = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".webp": true}
+
+// UploadIcon replaces a software entry's icon image. Only raster image
+// formats are accepted — SVG is deliberately excluded since it can embed
+// scripts, and these icons get served back out to every visitor.
+func UploadIcon(w http.ResponseWriter, r *http.Request, appID int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "Failed to read upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("icon")
+	if err != nil {
+		http.Error(w, "Missing icon file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if !allowedIconExt[ext] {
+		http.Error(w, "Icon must be a PNG, JPG, or WebP image", http.StatusBadRequest)
+		return
+	}
+
+	var slug, oldIcon string
+	if err := db.DB.QueryRow("SELECT slug, icon_filename FROM apps WHERE id=?", appID).Scan(&slug, &oldIcon); err != nil {
+		http.Error(w, "App not found", http.StatusNotFound)
+		return
+	}
+
+	filename := fmt.Sprintf("%s-icon%s", slug, ext)
+	destPath := filepath.Join("icons", filename)
+	dest, err := os.Create(destPath)
+	if err != nil {
+		http.Error(w, "Could not save icon", http.StatusInternalServerError)
+		return
+	}
+	defer dest.Close()
+	if _, err := io.Copy(dest, file); err != nil {
+		os.Remove(destPath)
+		http.Error(w, "Upload was interrupted before it finished", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := db.DB.Exec("UPDATE apps SET icon_filename=? WHERE id=?", filename, appID); err != nil {
+		os.Remove(destPath)
+		http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Clean up the previous icon if its filename/extension changed.
+	if oldIcon != "" && oldIcon != filename {
+		os.Remove(filepath.Join("icons", oldIcon))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"icon_url": iconURL(filename)})
 }
 
 // UploadChunk appends one chunk of a file to a temporary in-progress upload,
@@ -351,6 +472,12 @@ func DeleteApp(w http.ResponseWriter, r *http.Request) {
 		for _, f := range filenames {
 			os.Remove(filepath.Join("releases", f))
 		}
+	}
+
+	var iconFilename string
+	db.DB.QueryRow("SELECT icon_filename FROM apps WHERE id=?", id).Scan(&iconFilename)
+	if iconFilename != "" {
+		os.Remove(filepath.Join("icons", iconFilename))
 	}
 
 	db.DB.Exec("DELETE FROM releases WHERE app_id=?", id)

@@ -18,7 +18,10 @@ function formatBytes(bytes) {
 
 function renderApp(app, currentUser) {
   const platforms = [...new Set(app.releases.map(r => r.platform.toLowerCase()))]
-  const mainIcon = PLATFORM_ICONS[platforms[0]] || '📦'
+  const fallbackIcon = PLATFORM_ICONS[platforms[0]] || '📦'
+  const iconHtml = app.icon_url
+    ? `<img src="${escapeHtml(app.icon_url)}" alt="" />`
+    : fallbackIcon
 
   const downloadsHtml = app.releases.map(rel => {
     const p = rel.platform.toLowerCase()
@@ -39,7 +42,7 @@ function renderApp(app, currentUser) {
 
   document.getElementById('app-detail').innerHTML = `
     <div class="detail-header">
-      <div class="detail-icon">${mainIcon}</div>
+      <div class="detail-icon">${iconHtml}</div>
       <div>
         <h1 class="detail-name">${escapeHtml(app.name)}</h1>
         <p style="color: var(--text2); font-size: 0.95rem;">

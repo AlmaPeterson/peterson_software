@@ -346,6 +346,24 @@ input[type="file"] {
   text-align: center;
 }
 
+.icon-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--fill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.icon-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* ---------- App grid (Home) ---------- */
 
 .app-grid {
@@ -375,15 +393,21 @@ input[type="file"] {
 .app-card:active { transform: scale(0.98); }
 
 .app-card-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
   background: var(--fill);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.7rem;
+  font-size: 2rem;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.app-card-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .app-card-name {
@@ -397,7 +421,15 @@ input[type="file"] {
   -webkit-box-orient: vertical;
 }
 .app-card-version { color: var(--text2); font-size: 0.76rem; }
-.app-card-platforms { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+
+.app-card-platforms {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+  font-size: 0.85rem;
+  opacity: 0.65;
+}
 
 /* ---------- Software detail page ---------- */
 
@@ -420,15 +452,21 @@ input[type="file"] {
   flex-wrap: wrap;
 }
 .detail-icon {
-  width: 84px;
-  height: 84px;
-  border-radius: 20px;
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
   background: var(--fill);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.4rem;
+  font-size: 2.6rem;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.detail-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .detail-name {
   font-size: clamp(1.5rem, 4vw, 1.9rem);

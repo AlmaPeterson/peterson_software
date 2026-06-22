@@ -48,14 +48,17 @@ function renderGrid() {
 
   grid.innerHTML = filtered.map(app => {
     const platforms = appPlatforms(app)
-    const mainIcon = PLATFORM_ICONS[platforms[0]] || '📦'
-    const badges = platforms.map(p => `<span class="badge badge-${p}" title="${escapeHtml(p)}">${PLATFORM_ICONS[p] || '📦'}</span>`).join('')
+    const fallbackIcon = PLATFORM_ICONS[platforms[0]] || '📦'
+    const iconHtml = app.icon_url
+      ? `<img src="${escapeHtml(app.icon_url)}" alt="" />`
+      : fallbackIcon
+    const platformIcons = platforms.map(p => `<span title="${escapeHtml(p)}">${PLATFORM_ICONS[p] || '📦'}</span>`).join('')
     return `
       <a class="app-card" href="template.html?slug=${encodeURIComponent(app.slug)}">
-        <div class="app-card-icon">${mainIcon}</div>
+        <div class="app-card-icon">${iconHtml}</div>
         <div class="app-card-name">${escapeHtml(app.name)}</div>
         <div class="app-card-version">v${escapeHtml(app.version)}</div>
-        <div class="app-card-platforms">${badges}</div>
+        <div class="app-card-platforms">${platformIcons}</div>
       </a>
     `
   }).join('')
