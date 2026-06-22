@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -165,151 +163,140 @@ func GetApp(w http.ResponseWriter, r *http.Request, slug string) {
 	json.NewEncoder(w).Encode(a)
 }
 
-func saveUploadedFile(slug, version string, fh *multipart.FileHeader) (filename string, size int64, err error) {
-	filename = fmt.Sprintf("%s-%s-%s", slug, version, fh.Filename)
-	destPath := filepath.Join("releases", filename)
-
-	src, err := fh.Open()
-	if err != nil {
-		return "", 0, err
-	}
-	defer src.Close()
-
-	dest, err := os.Create(destPath)
-	if err != nil {
-		return "", 0, err
-	}
-	defer dest.Close()
-
-	size, err = io.Copy(dest, src)
-	if err != nil {
-		// Don't leave a truncated file on disk if the upload was interrupted.
-		os.Remove(destPath)
-		return "", 0, err
-	}
-	return filename, size, err
-}
-
-func UploadApp(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(500 << 20); err != nil { // 500MB
-		http.Error(w, "Failed to read upload: "+err.Error(), http.StatusBadRequest)
+// CreateApp creates a new software entry with no files yet. Files are added
+// afterward via UploadChunk — splitting "create" from "upload" lets the
+// (potentially large, slow) file transfer happen as a series of small
+// requests instead of one long one, which is what made uploads prone to
+// timing out or getting reset by intermediate proxies.
+func CreateApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	name := r.FormValue("name")
-	version := r.FormValue("version")
-	description := r.FormValue("description")
-	isPublicStr := r.FormValue("is_public")
-	isPublic := 1
-	if isPublicStr == "false" || isPublicStr == "0" {
-		isPublic = 0
+	var req struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		IsPublic    bool   `json:"is_public"`
 	}
-
-	if name == "" || version == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Version == "" {
 		http.Error(w, "name and version are required", http.StatusBadRequest)
 		return
 	}
 
-	files := r.MultipartForm.File["files"]
-	if len(files) == 0 {
-		http.Error(w, "At least one file is required", http.StatusBadRequest)
-		return
+	isPublic := 0
+	if req.IsPublic {
+		isPublic = 1
 	}
-
-	slug := slugify(name)
+	slug := slugify(req.Name)
 
 	res, err := db.DB.Exec(
 		"INSERT INTO apps (name, slug, description, version, is_public) VALUES (?,?,?,?,?)",
-		name, slug, description, version, isPublic,
+		req.Name, slug, req.Description, req.Version, isPublic,
 	)
 	if err != nil {
 		http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	appID, _ := res.LastInsertId()
+	id, _ := res.LastInsertId()
 
-	var saved []string
-	var failed []string
-	for _, fh := range files {
-		filename, size, err := saveUploadedFile(slug, version, fh)
-		if err != nil {
-			log.Printf("upload: failed to save %q for app %d: %v", fh.Filename, appID, err)
-			failed = append(failed, fh.Filename)
-			continue
-		}
-		platform := detectPlatform(fh.Filename)
-		_, err = db.DB.Exec(
-			"INSERT INTO releases (app_id, platform, filename, file_size) VALUES (?,?,?,?)",
-			appID, platform, filename, size,
-		)
-		if err != nil {
-			log.Printf("upload: failed to record release %q for app %d: %v", filename, appID, err)
-			os.Remove(filepath.Join("releases", filename))
-			failed = append(failed, fh.Filename)
-			continue
-		}
-		saved = append(saved, filename)
-	}
-
-	if len(saved) == 0 {
-		db.DB.Exec("DELETE FROM apps WHERE id=?", appID)
-		http.Error(w, "Could not save any uploaded files", http.StatusInternalServerError)
-		return
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": appID, "files": saved, "failed": failed})
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "slug": slug})
 }
 
-// UploadAppFile adds one more platform-specific file to an existing software entry.
-func UploadAppFile(w http.ResponseWriter, r *http.Request, appID int64) {
-	if err := r.ParseMultipartForm(500 << 20); err != nil {
-		http.Error(w, "Failed to read upload: "+err.Error(), http.StatusBadRequest)
+// UploadChunk appends one chunk of a file to a temporary in-progress upload,
+// keyed by a client-generated uploadId. The client sends chunks sequentially;
+// once chunkIndex is the last one, the temp file is finalized into a release
+// for the given app. Each request only carries a few MB, so it stays well
+// under any reverse proxy's timeout or body-size limit regardless of how
+// large the overall file is or how slow the connection is.
+func UploadChunk(w http.ResponseWriter, r *http.Request, appID int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // chunks are small; this is generous headroom
+		http.Error(w, "Failed to read chunk: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var slug, version string
-	err := db.DB.QueryRow("SELECT slug, version FROM apps WHERE id=?", appID).Scan(&slug, &version)
+	uploadID := r.FormValue("uploadId")
+	filename := r.FormValue("filename")
+	chunkIndex, errIdx := strconv.Atoi(r.FormValue("chunkIndex"))
+	totalChunks, errTotal := strconv.Atoi(r.FormValue("totalChunks"))
+	if uploadID == "" || filename == "" || errIdx != nil || errTotal != nil || chunkIndex < 0 || totalChunks <= 0 {
+		http.Error(w, "Invalid chunk metadata", http.StatusBadRequest)
+		return
+	}
+
+	chunk, _, err := r.FormFile("chunk")
 	if err != nil {
+		http.Error(w, "Missing chunk data", http.StatusBadRequest)
+		return
+	}
+	defer chunk.Close()
+
+	var slug, version string
+	if err := db.DB.QueryRow("SELECT slug, version FROM apps WHERE id=?", appID).Scan(&slug, &version); err != nil {
 		http.Error(w, "App not found", http.StatusNotFound)
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	tempPath := filepath.Join("releases", ".tmp-"+uploadID)
+	f, err := os.OpenFile(tempPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		http.Error(w, "File upload error", http.StatusBadRequest)
+		http.Error(w, "Could not open temp file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer file.Close()
-
-	filename := fmt.Sprintf("%s-%s-%s", slug, version, header.Filename)
-	destPath := filepath.Join("releases", filename)
-	dest, err := os.Create(destPath)
-	if err != nil {
-		http.Error(w, "Could not save file", http.StatusInternalServerError)
-		return
-	}
-	defer dest.Close()
-	size, err := io.Copy(dest, file)
-	if err != nil {
-		os.Remove(destPath)
-		http.Error(w, "Upload was interrupted before it finished", http.StatusBadRequest)
+	_, copyErr := io.Copy(f, chunk)
+	f.Close()
+	if copyErr != nil {
+		os.Remove(tempPath)
+		http.Error(w, "Failed to write chunk: "+copyErr.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	platform := detectPlatform(header.Filename)
+	w.Header().Set("Content-Type", "application/json")
+
+	if chunkIndex < totalChunks-1 {
+		json.NewEncoder(w).Encode(map[string]interface{}{"received": chunkIndex})
+		return
+	}
+
+	// Last chunk — finalize into a release.
+	info, statErr := os.Stat(tempPath)
+	if statErr != nil {
+		http.Error(w, "Upload session not found", http.StatusBadRequest)
+		return
+	}
+	finalFilename := fmt.Sprintf("%s-%s-%s", slug, version, filename)
+	finalPath := filepath.Join("releases", finalFilename)
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		http.Error(w, "Could not finalize upload: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	platform := detectPlatform(filename)
 	res, err := db.DB.Exec(
 		"INSERT INTO releases (app_id, platform, filename, file_size) VALUES (?,?,?,?)",
-		appID, platform, filename, size,
+		appID, platform, finalFilename, info.Size(),
 	)
 	if err != nil {
-		os.Remove(destPath)
+		os.Remove(finalPath)
 		http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	id, _ := res.LastInsertId()
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "platform": platform, "filename": filename})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id": id, "platform": platform, "filename": finalFilename, "file_size": info.Size(),
+	})
 }
 
 func DownloadApp(w http.ResponseWriter, r *http.Request, slug, platform string) {

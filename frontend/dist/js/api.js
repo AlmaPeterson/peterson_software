@@ -27,8 +27,8 @@ export const api = {
 
   getApps: () => req('/apps'),
   getApp: (slug) => req(`/apps/${slug}`),
-  uploadApp: (form) => req('/admin/apps/upload', { method: 'POST', body: form }),
-  addAppFile: (appId, form) => req(`/admin/apps/${appId}/files`, { method: 'POST', body: form }),
+  createApp: (data) => req('/admin/apps', { method: 'POST', body: JSON.stringify(data) }),
+  uploadChunk: (appId, form) => req(`/admin/apps/${appId}/files/chunk`, { method: 'POST', body: form }),
   deleteApp: (id) => req(`/admin/apps/delete/${id}`, { method: 'DELETE' }),
   deleteRelease: (id) => req(`/admin/releases/${id}`, { method: 'DELETE' }),
 

@@ -58,18 +58,18 @@ func main() {
 
 	// Admin routes
 	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/api/admin/apps/upload", handlers.UploadApp)
+	adminMux.HandleFunc("/api/admin/apps", handlers.CreateApp)
 	adminMux.HandleFunc("/api/admin/apps/delete/", handlers.DeleteApp)
 	adminMux.HandleFunc("/api/admin/apps/", func(w http.ResponseWriter, r *http.Request) {
-		// /api/admin/apps/{id}/files — add a platform-specific file to an existing software entry
+		// /api/admin/apps/{id}/files/chunk — append one chunk of a file upload to an app
 		rest := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/apps/"), "/"), "/")
-		if len(rest) == 2 && rest[1] == "files" {
+		if len(rest) == 3 && rest[1] == "files" && rest[2] == "chunk" {
 			id, err := strconv.ParseInt(rest[0], 10, 64)
 			if err != nil {
 				http.Error(w, "Invalid ID", http.StatusBadRequest)
 				return
 			}
-			handlers.UploadAppFile(w, r, id)
+			handlers.UploadChunk(w, r, id)
 			return
 		}
 		http.NotFound(w, r)

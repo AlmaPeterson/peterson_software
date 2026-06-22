@@ -21,6 +21,30 @@ function escapeHtml(str) {
   return div.innerHTML
 }
 
+const CHUNK_SIZE = 4 * 1024 * 1024 // 4MB — small enough to stay well under any proxy's timeout/body-size limit
+
+// Uploads a file as a sequence of small chunked requests instead of one long
+// one, so no single request runs long enough to trip a reverse proxy's
+// timeout regardless of file size or connection speed.
+async function uploadFileInChunks(appId, file, onProgress) {
+  const uploadId = crypto.randomUUID()
+  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
+  let result = null
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE
+    const blob = file.slice(start, start + CHUNK_SIZE)
+    const fd = new FormData()
+    fd.append('uploadId', uploadId)
+    fd.append('filename', file.name)
+    fd.append('chunkIndex', String(i))
+    fd.append('totalChunks', String(totalChunks))
+    fd.append('chunk', blob, file.name)
+    result = await api.uploadChunk(appId, fd)
+    if (onProgress) onProgress((i + 1) / totalChunks)
+  }
+  return result
+}
+
 let apps = []
 let users = []
 
@@ -105,13 +129,16 @@ function renderApps() {
     input.addEventListener('change', async () => {
       const file = input.files[0]
       if (!file) return
-      const fd = new FormData()
-      fd.append('file', file)
+      const label = input.closest('label')
+      const originalText = label.firstChild.textContent
       try {
-        await api.addAppFile(input.dataset.appId, fd)
+        await uploadFileInChunks(input.dataset.appId, file, (pct) => {
+          label.firstChild.textContent = ` Uploading… ${Math.round(pct * 100)}% `
+        })
         loadApps()
       } catch (err) {
         alert(err.message)
+        label.firstChild.textContent = originalText
       }
     })
   })
@@ -196,23 +223,39 @@ const uploadSubmit = document.getElementById('upload-submit')
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault()
   const filesInput = document.getElementById('up-files')
-  if (!filesInput.files.length) {
+  const files = Array.from(filesInput.files)
+  if (files.length === 0) {
     uploadError.textContent = 'Please select at least one file'
     uploadError.style.display = 'block'
     return
   }
   uploadError.style.display = 'none'
   uploadSubmit.disabled = true
-  uploadSubmit.textContent = 'Uploading…'
 
-  const fd = new FormData(uploadForm)
   try {
-    const result = await api.uploadApp(fd)
+    const app = await api.createApp({
+      name: document.getElementById('up-name').value,
+      version: document.getElementById('up-version').value,
+      description: document.getElementById('up-description').value,
+      is_public: document.getElementById('up-visibility').value === 'true',
+    })
+
+    const failed = []
+    for (const file of files) {
+      try {
+        await uploadFileInChunks(app.id, file, (pct) => {
+          uploadSubmit.textContent = `Uploading ${file.name}… ${Math.round(pct * 100)}%`
+        })
+      } catch (err) {
+        failed.push(file.name)
+      }
+    }
+
     uploadForm.reset()
     document.getElementById('file-preview').innerHTML = ''
     loadApps()
-    if (result.failed && result.failed.length > 0) {
-      uploadError.textContent = `Uploaded, but these files failed and were skipped: ${result.failed.join(', ')}`
+    if (failed.length > 0) {
+      uploadError.textContent = `Uploaded, but these files failed and were skipped: ${failed.join(', ')}`
       uploadError.style.display = 'block'
     }
   } catch (err) {
