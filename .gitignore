@@ -3,3 +3,4 @@ data.db-journal
 data.db-wal
 data.db-shm
 server/releases/
+server/jwt_secret.key
