@@ -1,5 +1,6 @@
 import { api } from './api.js'
 import { initNav } from './nav.js'
+import { getToken } from './auth.js'
 
 const PLATFORM_ICONS = { android: '🤖', ios: '🍎', windows: '🪟', mac: '🍏', linux: '🐧', other: '📦' }
 
@@ -55,12 +56,45 @@ function renderApp(app, currentUser) {
   `
 
   document.querySelectorAll('.download-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (!app.is_public && !currentUser) {
         alert('Please sign in to download this file.')
         return
       }
-      window.location.href = api.downloadUrl(app.slug, btn.dataset.platform)
+
+      // A plain navigation (window.location.href) never sends our
+      // Authorization header, so private downloads would always look
+      // unauthenticated to the server. Fetch the file with the header
+      // attached instead, then trigger a save via a temporary blob link.
+      const originalText = btn.textContent
+      btn.disabled = true
+      btn.textContent = 'Downloading…'
+      try {
+        const token = getToken()
+        const res = await fetch(api.downloadUrl(app.slug, btn.dataset.platform), {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+        if (!res.ok) {
+          throw new Error((await res.text()) || res.statusText)
+        }
+        const blob = await res.blob()
+        const disposition = res.headers.get('Content-Disposition') || ''
+        const match = disposition.match(/filename="?([^"]+)"?/)
+
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = match ? match[1] : ''
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      } catch (err) {
+        alert('Download failed: ' + err.message)
+      } finally {
+        btn.disabled = false
+        btn.textContent = originalText
+      }
     })
   })
 }
