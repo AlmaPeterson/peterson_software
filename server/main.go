@@ -114,6 +114,6 @@ func main() {
 		fs.ServeHTTP(w, r)
 	})
 
-	log.Println("Peterson Software running on http://localhost:8080 (redeploy test v1)")
+	log.Println("Peterson Software running on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
 }
