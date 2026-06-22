@@ -21,7 +21,10 @@ function escapeHtml(str) {
   return div.innerHTML
 }
 
-const CHUNK_SIZE = 4 * 1024 * 1024 // 4MB — small enough to stay well under any proxy's timeout/body-size limit
+// 512KB — comfortably under nginx's stock 1MB client_max_body_size default,
+// so uploads work even if whatever proxy sits in front was never explicitly
+// configured for larger request bodies.
+const CHUNK_SIZE = 512 * 1024
 
 // Uploads a file as a sequence of small chunked requests instead of one long
 // one, so no single request runs long enough to trip a reverse proxy's
