@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -228,9 +229,12 @@ func UploadApp(w http.ResponseWriter, r *http.Request) {
 	appID, _ := res.LastInsertId()
 
 	var saved []string
+	var failed []string
 	for _, fh := range files {
 		filename, size, err := saveUploadedFile(slug, version, fh)
 		if err != nil {
+			log.Printf("upload: failed to save %q for app %d: %v", fh.Filename, appID, err)
+			failed = append(failed, fh.Filename)
 			continue
 		}
 		platform := detectPlatform(fh.Filename)
@@ -239,7 +243,9 @@ func UploadApp(w http.ResponseWriter, r *http.Request) {
 			appID, platform, filename, size,
 		)
 		if err != nil {
+			log.Printf("upload: failed to record release %q for app %d: %v", filename, appID, err)
 			os.Remove(filepath.Join("releases", filename))
+			failed = append(failed, fh.Filename)
 			continue
 		}
 		saved = append(saved, filename)
@@ -252,7 +258,7 @@ func UploadApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": appID, "files": saved})
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": appID, "files": saved, "failed": failed})
 }
 
 // UploadAppFile adds one more platform-specific file to an existing software entry.

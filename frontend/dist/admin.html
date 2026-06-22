@@ -17,9 +17,12 @@
     </header>
 
     <main class="container" style="padding-bottom: 60px;">
-      <div class="page-header" style="padding-bottom: 20px;">
-        <h1 class="page-title" style="font-size: 1.6rem;">Admin Panel</h1>
+      <div class="page-header" style="padding-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+        <h1 class="page-title" style="font-size: 1.6rem; margin-bottom: 0;">Admin Panel</h1>
+        <button class="btn btn-secondary btn-sm" id="redeploy-btn">↻ Redeploy from Git</button>
       </div>
+
+      <div class="banner banner-success" id="redeploy-status" style="display: none; margin-bottom: 20px; white-space: pre-wrap;"></div>
 
       <div class="segmented" style="margin-bottom: 24px;" role="tablist">
         <button class="segmented-item is-active" id="tab-apps" role="tab" aria-selected="true">Releases</button>

@@ -32,6 +32,8 @@ export const api = {
   deleteApp: (id) => req(`/admin/apps/delete/${id}`, { method: 'DELETE' }),
   deleteRelease: (id) => req(`/admin/releases/${id}`, { method: 'DELETE' }),
 
+  redeploy: () => req('/admin/redeploy', { method: 'POST' }),
+
   getUsers: () => req('/admin/users'),
   updateRole: (id, role) => req(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (id) => req(`/admin/users/${id}`, { method: 'DELETE' }),

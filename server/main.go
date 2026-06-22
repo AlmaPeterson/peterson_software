@@ -83,6 +83,7 @@ func main() {
 		}
 		handlers.DeleteRelease(w, r, id)
 	})
+	adminMux.HandleFunc("/api/admin/redeploy", handlers.Redeploy)
 	adminMux.HandleFunc("/api/admin/users", handlers.ListUsers)
 	adminMux.HandleFunc("/api/admin/users/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/role") {

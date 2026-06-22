@@ -207,16 +207,51 @@ uploadForm.addEventListener('submit', async (e) => {
 
   const fd = new FormData(uploadForm)
   try {
-    await api.uploadApp(fd)
+    const result = await api.uploadApp(fd)
     uploadForm.reset()
     document.getElementById('file-preview').innerHTML = ''
     loadApps()
+    if (result.failed && result.failed.length > 0) {
+      uploadError.textContent = `Uploaded, but these files failed and were skipped: ${result.failed.join(', ')}`
+      uploadError.style.display = 'block'
+    }
   } catch (err) {
     uploadError.textContent = err.message
     uploadError.style.display = 'block'
   } finally {
     uploadSubmit.disabled = false
     uploadSubmit.textContent = 'Upload Software'
+  }
+})
+
+document.getElementById('redeploy-btn').addEventListener('click', async () => {
+  if (!confirm('Pull the latest changes from git and restart the server now? The site will be briefly unavailable.')) return
+
+  const status = document.getElementById('redeploy-status')
+  const btn = document.getElementById('redeploy-btn')
+  btn.disabled = true
+  status.className = 'banner banner-success'
+  status.textContent = 'Pulling latest changes and restarting…'
+  status.style.display = 'block'
+
+  try {
+    const result = await api.redeploy()
+    status.textContent = `Restarting with latest changes. Reload in a few seconds.\n${result.output || ''}`
+  } catch (err) {
+    // The server responds with JSON only when git pull actually failed
+    // (and it did NOT restart in that case). Anything else here — a raw
+    // network error — is expected if the connection dropped because the
+    // restart already happened mid-response.
+    let parsed = null
+    try { parsed = JSON.parse(err.message) } catch {}
+    if (parsed && parsed.error) {
+      status.className = 'banner banner-danger'
+      status.textContent = `git pull failed — server was NOT restarted:\n${parsed.output || parsed.error}`
+    } else {
+      status.textContent = 'Connection dropped, which is expected if the restart already happened. Reload in a few seconds to check.'
+    }
+  } finally {
+    btn.disabled = false
   }
 })
 
