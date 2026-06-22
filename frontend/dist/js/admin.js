@@ -247,6 +247,7 @@ uploadForm.addEventListener('submit', async (e) => {
           uploadSubmit.textContent = `Uploading ${file.name}… ${Math.round(pct * 100)}%`
         })
       } catch (err) {
+        console.error(`upload failed for ${file.name}:`, err)
         failed.push(file.name)
       }
     }
