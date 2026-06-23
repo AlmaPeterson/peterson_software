@@ -1,19 +1,6 @@
 import { api } from './api.js'
 import { initNav } from './nav.js'
-
-const PLATFORM_ICONS = { android: '🤖', ios: '🍎', windows: '🪟', mac: '🍏', linux: '🐧', other: '📦' }
-const EXTENSION_PLATFORMS = {
-  apk: 'Android', aab: 'Android',
-  ipa: 'iOS',
-  exe: 'Windows', msi: 'Windows',
-  dmg: 'Mac', pkg: 'Mac',
-  deb: 'Linux', rpm: 'Linux', appimage: 'Linux',
-}
-
-function detectPlatformClient(filename) {
-  const ext = filename.toLowerCase().split('.').pop()
-  return EXTENSION_PLATFORMS[ext] || 'Other'
-}
+import { platformInfo, detectPlatformFromFilename } from './platforms.js'
 
 function escapeHtml(str) {
   const div = document.createElement('div')
@@ -171,19 +158,17 @@ function renderApps() {
 
 function appIconHtml(app) {
   if (app.icon_url) return `<img src="${escapeHtml(app.icon_url)}" alt="" />`
-  const platform = app.releases[0] ? app.releases[0].platform.toLowerCase() : 'other'
-  return PLATFORM_ICONS[platform] || '📦'
+  return '<span class="icon-fallback">⬡</span>'
 }
 
 function renderAppRow(app) {
-  const badges = app.releases.map(rel => {
+  const tags = app.releases.map(rel => {
     const p = rel.platform.toLowerCase()
-    const icon = PLATFORM_ICONS[p] || '📦'
+    const info = platformInfo(p)
     return `
-      <span class="badge badge-${p}" style="display: inline-flex; align-items: center; gap: 4px;">
-        ${icon} ${escapeHtml(rel.platform)}
-        <button class="release-delete-btn" data-release-id="${rel.id}" title="Remove ${escapeHtml(rel.platform)} file"
-          style="background: none; border: none; color: inherit; cursor: pointer; font-size: 0.95em; line-height: 1; padding: 0;">×</button>
+      <span class="ptag ptag-${p}">
+        <span class="ptag-dot"></span>${info.code}
+        <button class="ptag-remove release-delete-btn" data-release-id="${rel.id}" title="Remove ${escapeHtml(rel.platform)} file">×</button>
       </span>
     `
   }).join('')
@@ -195,11 +180,11 @@ function renderAppRow(app) {
         <div>
           <div style="margin-bottom: 8px;">
             <span style="font-weight: 600; font-size: 0.94rem;">${escapeHtml(app.name)}</span>
-            <span style="color: var(--text2); font-size: 0.82rem; margin-left: 8px;">v${escapeHtml(app.version)}</span>
+            <span class="mono" style="color: var(--text2); font-size: 0.8rem; margin-left: 8px;">v${escapeHtml(app.version)}</span>
             <span style="margin-left: 8px;" class="badge ${app.is_public ? 'badge-public' : 'badge-lock'}">${app.is_public ? 'Public' : 'Private'}</span>
           </div>
           <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
-            ${badges}
+            ${tags}
             <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
               + Add File
               <input type="file" class="add-file-input" data-app-id="${app.id}" style="display: none;" />
@@ -322,9 +307,9 @@ document.getElementById('up-files').addEventListener('change', (e) => {
   const preview = document.getElementById('file-preview')
   const files = Array.from(e.target.files)
   preview.innerHTML = files.map(f => {
-    const platform = detectPlatformClient(f.name)
-    const icon = PLATFORM_ICONS[platform.toLowerCase()] || '📦'
-    return `<span class="badge badge-${platform.toLowerCase()}">${icon} ${platform} · ${escapeHtml(f.name)}</span>`
+    const platform = detectPlatformFromFilename(f.name)
+    const info = platformInfo(platform)
+    return `<span class="ptag ptag-${platform}"><span class="ptag-dot"></span>${info.label} · ${escapeHtml(f.name)}</span>`
   }).join('')
 })
 

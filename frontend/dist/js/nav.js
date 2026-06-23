@@ -1,4 +1,5 @@
 import { getCurrentUser, logout } from './auth.js'
+import { initThemeToggle } from './theme.js'
 
 export async function initNav() {
   const user = await getCurrentUser()
@@ -6,6 +7,7 @@ export async function initNav() {
   if (!actions) return user
 
   actions.innerHTML = ''
+  initThemeToggle(actions)
 
   if (user?.role === 'admin') {
     const adminLink = document.createElement('a')

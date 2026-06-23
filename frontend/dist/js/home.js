@@ -1,7 +1,6 @@
 import { api } from './api.js'
 import { initNav } from './nav.js'
-
-const PLATFORM_ICONS = { android: '🤖', ios: '🍎', windows: '🪟', mac: '🍏', linux: '🐧', other: '📦' }
+import { platformInfo } from './platforms.js'
 
 let apps = []
 let filter = 'all'
@@ -24,7 +23,7 @@ function renderFilters() {
   const el = document.getElementById('filters')
   el.innerHTML = platforms.map(p => `
     <button class="segmented-item ${filter === p ? 'is-active' : ''}" data-platform="${p}" role="tab" aria-selected="${filter === p}">
-      ${p === 'all' ? 'All' : `${PLATFORM_ICONS[p] || '📦'} ${escapeHtml(p)}`}
+      ${p === 'all' ? 'All' : escapeHtml(platformInfo(p).label)}
     </button>
   `).join('')
 
@@ -48,20 +47,35 @@ function renderGrid() {
 
   grid.innerHTML = filtered.map(app => {
     const platforms = appPlatforms(app)
-    const fallbackIcon = PLATFORM_ICONS[platforms[0]] || '📦'
     const iconHtml = app.icon_url
       ? `<img src="${escapeHtml(app.icon_url)}" alt="" />`
-      : fallbackIcon
-    const platformIcons = platforms.map(p => `<span title="${escapeHtml(p)}">${PLATFORM_ICONS[p] || '📦'}</span>`).join('')
+      : '<span class="icon-fallback">⬡</span>'
+    const platformTags = platforms.map(p => {
+      const info = platformInfo(p)
+      return `<span class="ptag ptag-${p}" title="${escapeHtml(info.label)}"><span class="ptag-dot"></span>${info.code}</span>`
+    }).join('')
     return `
       <a class="app-card" href="template.html?slug=${encodeURIComponent(app.slug)}">
         <div class="app-card-icon">${iconHtml}</div>
         <div class="app-card-name">${escapeHtml(app.name)}</div>
         <div class="app-card-version">v${escapeHtml(app.version)}</div>
-        <div class="app-card-platforms">${platformIcons}</div>
+        <div class="app-card-platforms">${platformTags}</div>
       </a>
     `
   }).join('')
+}
+
+function renderSubtitle() {
+  const subtitle = document.getElementById('page-subtitle')
+  if (!subtitle) return
+  if (apps.length === 0) {
+    subtitle.textContent = 'Download the latest builds for all platforms.'
+    return
+  }
+  const platformCount = new Set(apps.flatMap(appPlatforms)).size
+  const buildWord = apps.length === 1 ? 'build' : 'builds'
+  const platformWord = platformCount === 1 ? 'platform' : 'platforms'
+  subtitle.textContent = `${apps.length} ${buildWord} across ${platformCount} ${platformWord}.`
 }
 
 async function main() {
@@ -73,6 +87,7 @@ async function main() {
   }
   document.getElementById('loading').style.display = 'none'
   document.getElementById('app-grid').style.display = ''
+  renderSubtitle()
   renderFilters()
   renderGrid()
 }

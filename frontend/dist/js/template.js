@@ -1,8 +1,7 @@
 import { api } from './api.js'
 import { initNav } from './nav.js'
 import { getToken } from './auth.js'
-
-const PLATFORM_ICONS = { android: '🤖', ios: '🍎', windows: '🪟', mac: '🍏', linux: '🐧', other: '📦' }
+import { platformInfo } from './platforms.js'
 
 function escapeHtml(str) {
   const div = document.createElement('div')
@@ -17,22 +16,20 @@ function formatBytes(bytes) {
 }
 
 function renderApp(app, currentUser) {
-  const platforms = [...new Set(app.releases.map(r => r.platform.toLowerCase()))]
-  const fallbackIcon = PLATFORM_ICONS[platforms[0]] || '📦'
   const iconHtml = app.icon_url
     ? `<img src="${escapeHtml(app.icon_url)}" alt="" />`
-    : fallbackIcon
+    : '<span class="icon-fallback">⬡</span>'
 
   const downloadsHtml = app.releases.map(rel => {
     const p = rel.platform.toLowerCase()
-    const icon = PLATFORM_ICONS[p] || '📦'
+    const info = platformInfo(p)
     return `
       <div class="list-row">
         <div style="display: flex; align-items: center; gap: 14px; min-width: 0;">
-          <div class="list-row-icon">${icon}</div>
+          <span class="ptag ptag-${p}"><span class="ptag-dot"></span>${info.code}</span>
           <div>
             <div style="font-weight: 600; font-size: 0.95rem;">${escapeHtml(rel.platform)}</div>
-            ${rel.file_size > 0 ? `<div style="color: var(--text3); font-size: 0.78rem;">${formatBytes(rel.file_size)}</div>` : ''}
+            ${rel.file_size > 0 ? `<div class="mono" style="color: var(--text3); font-size: 0.78rem;">${formatBytes(rel.file_size)}</div>` : ''}
           </div>
         </div>
         <button class="btn btn-primary btn-sm download-btn" data-platform="${escapeHtml(rel.platform)}">Download</button>
@@ -45,7 +42,7 @@ function renderApp(app, currentUser) {
       <div class="detail-icon">${iconHtml}</div>
       <div>
         <h1 class="detail-name">${escapeHtml(app.name)}</h1>
-        <p style="color: var(--text2); font-size: 0.95rem;">
+        <p class="detail-version">
           v${escapeHtml(app.version)}
           ${!app.is_public ? '<span class="badge badge-lock" style="margin-left: 8px;">🔒 Private</span>' : ''}
         </p>
