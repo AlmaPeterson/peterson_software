@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"peterson-software/apps"
 	"peterson-software/db"
 	"peterson-software/handlers"
 	"peterson-software/middleware"
@@ -26,9 +27,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
-	os.MkdirAll("releases", 0755)
-	os.MkdirAll("icons", 0755)
 	db.Init("../data.db")
+
+	appStore, err := apps.NewStore(db.DB)
+	if err != nil {
+		log.Fatal(err)
+	}
+	appHandlers := &handlers.AppHandlers{Store: appStore}
 
 	mux := http.NewServeMux()
 
@@ -38,17 +43,17 @@ func main() {
 	mux.Handle("/api/auth/me", middleware.Auth(http.HandlerFunc(handlers.Me)))
 
 	// App listing (optional auth — shows private apps if logged in)
-	mux.Handle("/api/apps", middleware.OptionalAuth(http.HandlerFunc(handlers.ListApps)))
+	mux.Handle("/api/apps", middleware.OptionalAuth(http.HandlerFunc(appHandlers.ListApps)))
 
 	// App detail + per-platform download (optional auth — private apps require auth)
 	mux.Handle("/api/apps/", middleware.OptionalAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/"), "/")
 		switch len(rest) {
 		case 1:
-			handlers.GetApp(w, r, rest[0])
+			appHandlers.GetApp(w, r, rest[0])
 		case 3:
 			if rest[1] == "download" {
-				handlers.DownloadApp(w, r, rest[0], rest[2])
+				appHandlers.DownloadApp(w, r, rest[0], rest[2])
 				return
 			}
 			http.NotFound(w, r)
@@ -59,8 +64,16 @@ func main() {
 
 	// Admin routes
 	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("/api/admin/apps", handlers.CreateApp)
-	adminMux.HandleFunc("/api/admin/apps/delete/", handlers.DeleteApp)
+	adminMux.HandleFunc("/api/admin/apps", appHandlers.CreateApp)
+	adminMux.HandleFunc("/api/admin/apps/delete/", func(w http.ResponseWriter, r *http.Request) {
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/admin/apps/delete/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid ID", http.StatusBadRequest)
+			return
+		}
+		appHandlers.DeleteApp(w, r, id)
+	})
 	adminMux.HandleFunc("/api/admin/apps/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/apps/"), "/"), "/")
 		id, err := strconv.ParseInt(rest[0], 10, 64)
@@ -71,13 +84,13 @@ func main() {
 		switch {
 		case len(rest) == 1:
 			// /api/admin/apps/{id} — edit name/version/description/visibility
-			handlers.UpdateApp(w, r, id)
+			appHandlers.UpdateApp(w, r, id)
 		case len(rest) == 2 && rest[1] == "icon":
 			// /api/admin/apps/{id}/icon — replace the icon image
-			handlers.UploadIcon(w, r, id)
+			appHandlers.UploadIcon(w, r, id)
 		case len(rest) == 3 && rest[1] == "files" && rest[2] == "chunk":
 			// /api/admin/apps/{id}/files/chunk — append one chunk of a file upload
-			handlers.UploadChunk(w, r, id)
+			appHandlers.UploadChunk(w, r, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -89,7 +102,7 @@ func main() {
 			http.Error(w, "Invalid ID", http.StatusBadRequest)
 			return
 		}
-		handlers.DeleteRelease(w, r, id)
+		appHandlers.DeleteRelease(w, r, id)
 	})
 	adminMux.HandleFunc("/api/admin/redeploy", handlers.Redeploy)
 	adminMux.HandleFunc("/api/admin/users", handlers.ListUsers)

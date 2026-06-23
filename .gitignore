@@ -4,4 +4,5 @@ data.db-wal
 data.db-shm
 server/releases/
 server/jwt_secret.key
+server/**/jwt_secret.key
 server/icons/
