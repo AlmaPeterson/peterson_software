@@ -171,10 +171,15 @@ button {
 .nav-username { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text2); }
 
 .theme-toggle {
-  padding: 8px;
-  width: 34px;
-  height: 34px;
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  background: var(--fill);
+  border: 1px solid var(--separator);
+  color: var(--text);
+  margin-right: 4px;
 }
+.theme-toggle:hover { background: var(--fill-strong); }
 .theme-toggle svg { display: block; }
 
 /* ---------- Buttons ---------- */
