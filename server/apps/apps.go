@@ -79,7 +79,24 @@ func NewStoreWithDirs(db *sql.DB, iconsDir, releasesDir string) (*Store, error) 
 	if err := os.MkdirAll(releasesDir, 0755); err != nil {
 		return nil, fmt.Errorf("apps: create releases dir: %w", err)
 	}
-	return &Store{db: db, iconsDir: iconsDir, releasesDir: releasesDir}, nil
+	s := &Store{db: db, iconsDir: iconsDir, releasesDir: releasesDir}
+	s.purgeStaleTempFiles()
+	return s, nil
+}
+
+// purgeStaleTempFiles removes any .tmp-* files left in the releases directory
+// from uploads that were abandoned (client retry, browser close, server crash).
+// Safe to call only at startup, before any new uploads are in-flight.
+func (s *Store) purgeStaleTempFiles() {
+	entries, err := os.ReadDir(s.releasesDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), ".tmp-") {
+			os.Remove(filepath.Join(s.releasesDir, e.Name()))
+		}
+	}
 }
 
 // TempUploadPath returns a scratch path, inside the same directory tree

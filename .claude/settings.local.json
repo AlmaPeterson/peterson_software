@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(npm run *)",
-      "Bash(go build *)"
+      "Bash(go build *)",
+      "Skill(code-review)",
+      "Bash(grep -E '\\\\.\\(go|js|ts\\)$')"
     ]
   }
 }

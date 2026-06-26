@@ -8,21 +8,18 @@ function escapeHtml(str) {
   return div.innerHTML
 }
 
-// 512KB — comfortably under nginx's stock 1MB client_max_body_size default,
-// so uploads work even if whatever proxy sits in front was never explicitly
-// configured for larger request bodies.
-const CHUNK_SIZE = 512 * 1024
+const MIN_CHUNK_SIZE = 256 * 1024
 
-// Uploads a file as a sequence of small chunked requests instead of one long
-// one, so no single request runs long enough to trip a reverse proxy's
-// timeout regardless of file size or connection speed.
-async function uploadFileInChunks(appId, file, onProgress) {
+// Sends a file as N equal chunks using the given chunkSize. Each chunk is a
+// separate POST so no single request needs to carry the whole file. Returns
+// the server's response from the final (completing) chunk.
+async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
   const uploadId = crypto.randomUUID()
-  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
+  const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize))
   let result = null
   for (let i = 0; i < totalChunks; i++) {
-    const start = i * CHUNK_SIZE
-    const blob = file.slice(start, start + CHUNK_SIZE)
+    const start = i * chunkSize
+    const blob = file.slice(start, start + chunkSize)
     const fd = new FormData()
     fd.append('uploadId', uploadId)
     fd.append('filename', file.name)
@@ -33,6 +30,27 @@ async function uploadFileInChunks(appId, file, onProgress) {
     if (onProgress) onProgress((i + 1) / totalChunks)
   }
   return result
+}
+
+// Tries to upload the whole file in one request first. If that fails, retries
+// with half the chunk size and starts over, halving again each time until a
+// transfer succeeds or the chunk size can't go lower than MIN_CHUNK_SIZE.
+async function uploadFile(appId, file, onProgress) {
+  if (file.size === 0) throw new Error('Cannot upload an empty file')
+  let chunkSize = file.size
+  while (true) {
+    try {
+      return await uploadFileInChunks(appId, file, chunkSize, onProgress)
+    } catch (err) {
+      // Only retry for errors that a smaller request might fix: network failures
+      // (no status) and 413 Too Large. Auth failures, validation errors, and
+      // server logic errors won't be helped by splitting, so surface them immediately.
+      if (err.status && err.status !== 413) throw err
+      if (chunkSize <= MIN_CHUNK_SIZE) throw err
+      chunkSize = Math.max(Math.floor(chunkSize / 2), MIN_CHUNK_SIZE)
+      if (onProgress) onProgress(0)
+    }
+  }
 }
 
 let apps = []
@@ -98,7 +116,7 @@ function renderApps() {
       const label = input.closest('label')
       const originalText = label.firstChild.textContent
       try {
-        await uploadFileInChunks(input.dataset.appId, file, (pct) => {
+        await uploadFile(input.dataset.appId, file, (pct) => {
           label.firstChild.textContent = ` Uploading… ${Math.round(pct * 100)}% `
         })
         loadApps()
@@ -351,7 +369,7 @@ uploadForm.addEventListener('submit', async (e) => {
     const failed = []
     for (const file of files) {
       try {
-        await uploadFileInChunks(app.id, file, (pct) => {
+        await uploadFile(app.id, file, (pct) => {
           uploadSubmit.textContent = `Uploading ${file.name}… ${Math.round(pct * 100)}%`
         })
       } catch (err) {

@@ -14,7 +14,9 @@ async function req(path, options = {}) {
   const res = await fetch(BASE + path, { ...options, headers })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(text || res.statusText)
+    const err = new Error(text || res.statusText)
+    err.status = res.status
+    throw err
   }
   if (res.status === 204) return null
   return res.json()

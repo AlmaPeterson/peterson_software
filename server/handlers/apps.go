@@ -163,17 +163,17 @@ func (h *AppHandlers) UploadIcon(w http.ResponseWriter, r *http.Request, appID i
 }
 
 // UploadChunk appends one chunk of a file to a temporary in-progress upload,
-// keyed by a client-generated uploadId. The client sends chunks sequentially;
+// keyed by a client-generated uploadId. The client may send the whole file as
+// a single chunk (totalChunks=1) or split it into N chunks sent sequentially;
 // once chunkIndex is the last one, the temp file is finalized into a release
-// for the given app via Store.AddRelease. Each request only carries a few
-// MB, so it stays well under any reverse proxy's timeout or body-size limit
-// regardless of how large the overall file is or how slow the connection is.
+// for the given app via Store.AddRelease. Starting with a single large request
+// and falling back to smaller chunks on failure is handled client-side.
 func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID int64) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseMultipartForm(10 << 20); err != nil { // chunks are small; this is generous headroom
+	if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB in-memory; larger bodies spill to disk
 		http.Error(w, "Failed to read chunk: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -201,10 +201,15 @@ func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID 
 		return
 	}
 	_, copyErr := io.Copy(f, chunk)
-	f.Close()
+	closeErr := f.Close()
 	if copyErr != nil {
 		os.Remove(tempPath)
 		http.Error(w, "Failed to write chunk: "+copyErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if closeErr != nil {
+		os.Remove(tempPath)
+		http.Error(w, "Failed to write chunk: "+closeErr.Error(), http.StatusInternalServerError)
 		return
 	}
 
