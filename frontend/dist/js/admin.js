@@ -52,10 +52,13 @@ async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
 // transfer succeeds or the chunk size can't go lower than MIN_CHUNK_SIZE.
 // At MIN_CHUNK_SIZE, allows up to MAX_ATTEMPTS_AT_MIN_SIZE retries for
 // transient failures (network errors, integrity failures) before giving up.
+// onProgress(pct, status?) — pct is 0–1; status replaces the percentage
+// display when present (used for retry messages).
 async function uploadFile(appId, file, onProgress) {
   if (file.size === 0) throw new Error('Cannot upload an empty file')
   let chunkSize = file.size
   let attemptsAtMinSize = 0
+  if (onProgress) onProgress(0)
   while (true) {
     try {
       return await uploadFileInChunks(appId, file, chunkSize, onProgress)
@@ -65,14 +68,14 @@ async function uploadFile(appId, file, onProgress) {
       if (err.status && err.status !== 413 && err.status !== 422) throw err
       if (chunkSize <= MIN_CHUNK_SIZE) {
         if (++attemptsAtMinSize < MAX_ATTEMPTS_AT_MIN_SIZE) {
-          if (onProgress) onProgress(0)
+          if (onProgress) onProgress(0, `Retrying… (attempt ${attemptsAtMinSize + 1} of ${MAX_ATTEMPTS_AT_MIN_SIZE})`)
           continue
         }
         throw err
       }
       chunkSize = Math.max(Math.floor(chunkSize / 2), MIN_CHUNK_SIZE)
       attemptsAtMinSize = 0
-      if (onProgress) onProgress(0)
+      if (onProgress) onProgress(0, 'Retrying with smaller chunks…')
     }
   }
 }
@@ -140,8 +143,8 @@ function renderApps() {
       const label = input.closest('label')
       const originalText = label.firstChild.textContent
       try {
-        await uploadFile(input.dataset.appId, file, (pct) => {
-          label.firstChild.textContent = ` Uploading… ${Math.round(pct * 100)}% `
+        await uploadFile(input.dataset.appId, file, (pct, status) => {
+          label.firstChild.textContent = status ?? ` Uploading… ${Math.round(pct * 100)}% `
         })
         loadApps()
       } catch (err) {
@@ -393,8 +396,8 @@ uploadForm.addEventListener('submit', async (e) => {
     const failed = []
     for (const file of files) {
       try {
-        await uploadFile(app.id, file, (pct) => {
-          uploadSubmit.textContent = `Uploading ${file.name}… ${Math.round(pct * 100)}%`
+        await uploadFile(app.id, file, (pct, status) => {
+          uploadSubmit.textContent = status ?? `Uploading ${file.name}… ${Math.round(pct * 100)}%`
         })
       } catch (err) {
         console.error(`upload failed for ${file.name}:`, err)
