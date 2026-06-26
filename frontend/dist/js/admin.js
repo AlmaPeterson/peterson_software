@@ -9,10 +9,17 @@ function escapeHtml(str) {
 }
 
 const MIN_CHUNK_SIZE = 256 * 1024
+const MAX_ATTEMPTS_AT_MIN_SIZE = 3
 
-// Sends a file as N equal chunks using the given chunkSize. Each chunk is a
-// separate POST so no single request needs to carry the whole file. Returns
-// the server's response from the final (completing) chunk.
+async function blobSHA256(blob) {
+  const buf = await blob.arrayBuffer()
+  const digest = await crypto.subtle.digest('SHA-256', buf)
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// Sends a file as N chunks of chunkSize bytes. Each chunk is hashed before
+// sending and the server echoes bytesReceived so partial writes are caught
+// even when no HTTP error is returned.
 async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
   const uploadId = crypto.randomUUID()
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize))
@@ -20,13 +27,21 @@ async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
   for (let i = 0; i < totalChunks; i++) {
     const start = i * chunkSize
     const blob = file.slice(start, start + chunkSize)
+    const hash = await blobSHA256(blob)
     const fd = new FormData()
     fd.append('uploadId', uploadId)
     fd.append('filename', file.name)
     fd.append('chunkIndex', String(i))
     fd.append('totalChunks', String(totalChunks))
+    fd.append('chunkHash', hash)
     fd.append('chunk', blob, file.name)
     result = await api.uploadChunk(appId, fd)
+    const expected = Math.min((i + 1) * chunkSize, file.size)
+    if (result.bytesReceived !== expected) {
+      const err = new Error(`Upload integrity check failed: server has ${result.bytesReceived} bytes, expected ${expected}`)
+      err.status = 422
+      throw err
+    }
     if (onProgress) onProgress((i + 1) / totalChunks)
   }
   return result
@@ -35,19 +50,28 @@ async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
 // Tries to upload the whole file in one request first. If that fails, retries
 // with half the chunk size and starts over, halving again each time until a
 // transfer succeeds or the chunk size can't go lower than MIN_CHUNK_SIZE.
+// At MIN_CHUNK_SIZE, allows up to MAX_ATTEMPTS_AT_MIN_SIZE retries for
+// transient failures (network errors, integrity failures) before giving up.
 async function uploadFile(appId, file, onProgress) {
   if (file.size === 0) throw new Error('Cannot upload an empty file')
   let chunkSize = file.size
+  let attemptsAtMinSize = 0
   while (true) {
     try {
       return await uploadFileInChunks(appId, file, chunkSize, onProgress)
     } catch (err) {
-      // Only retry for errors that a smaller request might fix: network failures
-      // (no status) and 413 Too Large. Auth failures, validation errors, and
-      // server logic errors won't be helped by splitting, so surface them immediately.
-      if (err.status && err.status !== 413) throw err
-      if (chunkSize <= MIN_CHUNK_SIZE) throw err
+      // Only retry for errors a smaller or fresh attempt might fix: network
+      // failures (no status), 413 Too Large, 422 integrity mismatch.
+      if (err.status && err.status !== 413 && err.status !== 422) throw err
+      if (chunkSize <= MIN_CHUNK_SIZE) {
+        if (++attemptsAtMinSize < MAX_ATTEMPTS_AT_MIN_SIZE) {
+          if (onProgress) onProgress(0)
+          continue
+        }
+        throw err
+      }
       chunkSize = Math.max(Math.floor(chunkSize / 2), MIN_CHUNK_SIZE)
+      attemptsAtMinSize = 0
       if (onProgress) onProgress(0)
     }
   }

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -187,6 +189,8 @@ func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID 
 		return
 	}
 
+	chunkHash := r.FormValue("chunkHash") // optional SHA-256 hex sent by client
+
 	chunk, _, err := r.FormFile("chunk")
 	if err != nil {
 		http.Error(w, "Missing chunk data", http.StatusBadRequest)
@@ -200,7 +204,8 @@ func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID 
 		http.Error(w, "Could not open temp file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_, copyErr := io.Copy(f, chunk)
+	hasher := sha256.New()
+	_, copyErr := io.Copy(f, io.TeeReader(chunk, hasher))
 	closeErr := f.Close()
 	if copyErr != nil {
 		os.Remove(tempPath)
@@ -212,21 +217,31 @@ func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID 
 		http.Error(w, "Failed to write chunk: "+closeErr.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if chunkIndex < totalChunks-1 {
-		json.NewEncoder(w).Encode(map[string]interface{}{"received": chunkIndex})
-		return
+	if chunkHash != "" {
+		if actual := hex.EncodeToString(hasher.Sum(nil)); actual != chunkHash {
+			os.Remove(tempPath)
+			http.Error(w, "Chunk integrity check failed", http.StatusUnprocessableEntity)
+			return
+		}
 	}
 
-	// Last chunk — finalize into a release.
 	info, statErr := os.Stat(tempPath)
 	if statErr != nil {
 		http.Error(w, "Upload session not found", http.StatusBadRequest)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+
+	if chunkIndex < totalChunks-1 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"received":      chunkIndex,
+			"bytesReceived": info.Size(),
+		})
+		return
+	}
+
+	// Last chunk — finalize into a release.
 	rel, err := h.Store.AddRelease(appID, tempPath, filename, info.Size())
 	if err != nil {
 		writeAppsError(w, err)
@@ -234,7 +249,8 @@ func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID 
 	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id": rel.ID, "platform": rel.Platform, "filename": rel.Filename, "file_size": rel.FileSize,
+		"id": rel.ID, "platform": rel.Platform, "filename": rel.Filename,
+		"file_size": rel.FileSize, "bytesReceived": info.Size(),
 	})
 }
 
