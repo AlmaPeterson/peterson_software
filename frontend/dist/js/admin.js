@@ -17,17 +17,43 @@ async function blobSHA256(blob) {
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
 }
 
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MB`
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function fmtMs(ms) {
+  if (ms < 1000) return `${ms.toFixed(0)}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
 // Sends a file as N chunks of chunkSize bytes. Each chunk is hashed before
 // sending and the server echoes bytesReceived so partial writes are caught
 // even when no HTTP error is returned.
 async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
   const uploadId = crypto.randomUUID()
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize))
+  console.log(
+    `[upload] Starting chunked transfer\n` +
+    `  file:         ${file.name}\n` +
+    `  size:         ${fmtBytes(file.size)} (${file.size} bytes)\n` +
+    `  chunk size:   ${fmtBytes(chunkSize)}\n` +
+    `  total chunks: ${totalChunks}\n` +
+    `  upload id:    ${uploadId}`
+  )
   let result = null
+  let totalNetworkMs = 0
+  const sessionStart = performance.now()
   for (let i = 0; i < totalChunks; i++) {
     const start = i * chunkSize
     const blob = file.slice(start, start + chunkSize)
+
+    const hashStart = performance.now()
     const hash = await blobSHA256(blob)
+    const hashMs = performance.now() - hashStart
+
     const fd = new FormData()
     fd.append('uploadId', uploadId)
     fd.append('filename', file.name)
@@ -35,15 +61,34 @@ async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
     fd.append('totalChunks', String(totalChunks))
     fd.append('chunkHash', hash)
     fd.append('chunk', blob, file.name)
+
+    const sendStart = performance.now()
     result = await api.uploadChunk(appId, fd)
+    const sendMs = performance.now() - sendStart
+    totalNetworkMs += sendMs
+
     const expected = Math.min((i + 1) * chunkSize, file.size)
     if (result.bytesReceived !== expected) {
       const err = new Error(`Upload integrity check failed: server has ${result.bytesReceived} bytes, expected ${expected}`)
       err.status = 422
       throw err
     }
+
+    const speed = blob.size / (sendMs / 1000)
+    console.log(
+      `[upload] Chunk ${i + 1}/${totalChunks} — ` +
+      `${fmtBytes(blob.size)} | hash: ${fmtMs(hashMs)} | send: ${fmtMs(sendMs)} | ` +
+      `${fmtBytes(speed)}/s | server total: ${fmtBytes(result.bytesReceived)}`
+    )
+
     if (onProgress) onProgress((i + 1) / totalChunks)
   }
+  const totalMs = performance.now() - sessionStart
+  const avgSpeed = file.size / (totalNetworkMs / 1000)
+  console.log(
+    `[upload] Complete — ${fmtBytes(file.size)} in ${fmtMs(totalMs)} ` +
+    `(net ${fmtMs(totalNetworkMs)}) | avg ${fmtBytes(avgSpeed)}/s`
+  )
   return result
 }
 
@@ -68,13 +113,17 @@ async function uploadFile(appId, file, onProgress) {
       if (err.status && err.status !== 413 && err.status !== 422) throw err
       if (chunkSize <= MIN_CHUNK_SIZE) {
         if (++attemptsAtMinSize < MAX_ATTEMPTS_AT_MIN_SIZE) {
+          console.warn(`[upload] Transient failure, retrying (attempt ${attemptsAtMinSize + 1}/${MAX_ATTEMPTS_AT_MIN_SIZE}): ${err.message}`)
           if (onProgress) onProgress(0, `Retrying… (attempt ${attemptsAtMinSize + 1} of ${MAX_ATTEMPTS_AT_MIN_SIZE})`)
           continue
         }
+        console.error(`[upload] Failed after ${MAX_ATTEMPTS_AT_MIN_SIZE} attempts at min chunk size (${fmtBytes(MIN_CHUNK_SIZE)}):`, err)
         throw err
       }
+      const prevSize = chunkSize
       chunkSize = Math.max(Math.floor(chunkSize / 2), MIN_CHUNK_SIZE)
       attemptsAtMinSize = 0
+      console.warn(`[upload] Chunk too large or integrity error (${err.status ?? 'network'}) — halving chunk size: ${fmtBytes(prevSize)} → ${fmtBytes(chunkSize)}`)
       if (onProgress) onProgress(0, 'Retrying with smaller chunks…')
     }
   }
