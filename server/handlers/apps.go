@@ -145,6 +145,7 @@ func (h *AppHandlers) UploadIcon(w http.ResponseWriter, r *http.Request, appID i
 		http.Error(w, "Failed to read upload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 
 	file, header, err := r.FormFile("icon")
 	if err != nil {
@@ -179,6 +180,7 @@ func (h *AppHandlers) UploadChunk(w http.ResponseWriter, r *http.Request, appID 
 		http.Error(w, "Failed to read chunk: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 
 	uploadID := r.FormValue("uploadId")
 	filename := r.FormValue("filename")
