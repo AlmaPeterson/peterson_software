@@ -38,7 +38,7 @@ function upload(path, formData, onProgress) {
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         if (xhr.status === 204) return resolve(null)
-        try { resolve(JSON.parse(xhr.responseText)) } catch { resolve(null) }
+        try { resolve(JSON.parse(xhr.responseText)) } catch (e) { reject(e) }
       } else {
         const err = new Error(xhr.responseText || xhr.statusText)
         err.status = xhr.status

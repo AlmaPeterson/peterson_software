@@ -83,7 +83,6 @@ async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
       `${fmtBytes(speed)}/s | server total: ${fmtBytes(result.bytesReceived)}`
     )
 
-    if (onProgress) onProgress((i + 1) / totalChunks)
   }
   const totalMs = performance.now() - sessionStart
   const avgSpeed = file.size / (totalNetworkMs / 1000)
@@ -115,8 +114,8 @@ async function uploadFile(appId, file, onProgress) {
       if (err.status && err.status !== 413 && err.status !== 422) throw err
       if (chunkSize <= MIN_CHUNK_SIZE) {
         if (++attemptsAtMinSize < MAX_ATTEMPTS_AT_MIN_SIZE) {
-          console.warn(`[upload] Transient failure, retrying (attempt ${attemptsAtMinSize + 1}/${MAX_ATTEMPTS_AT_MIN_SIZE}): ${err.message}`)
-          if (onProgress) onProgress(0, `Retrying… (attempt ${attemptsAtMinSize + 1} of ${MAX_ATTEMPTS_AT_MIN_SIZE})`)
+          console.warn(`[upload] Transient failure, retrying (attempt ${attemptsAtMinSize}/${MAX_ATTEMPTS_AT_MIN_SIZE}): ${err.message}`)
+          if (onProgress) onProgress(0, `Retrying… (attempt ${attemptsAtMinSize} of ${MAX_ATTEMPTS_AT_MIN_SIZE})`)
           continue
         }
         console.error(`[upload] Failed after ${MAX_ATTEMPTS_AT_MIN_SIZE} attempts at min chunk size (${fmtBytes(MIN_CHUNK_SIZE)}):`, err)
