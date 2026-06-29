@@ -63,7 +63,9 @@ async function uploadFileInChunks(appId, file, chunkSize, onProgress) {
     fd.append('chunk', blob, file.name)
 
     const sendStart = performance.now()
-    result = await api.uploadChunk(appId, fd)
+    result = await api.uploadChunk(appId, fd, (loaded, total) => {
+      if (onProgress) onProgress((start + (loaded / total) * blob.size) / file.size)
+    })
     const sendMs = performance.now() - sendStart
     totalNetworkMs += sendMs
 

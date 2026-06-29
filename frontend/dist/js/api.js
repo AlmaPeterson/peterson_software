@@ -22,6 +22,35 @@ async function req(path, options = {}) {
   return res.json()
 }
 
+// XHR-based POST for FormData payloads that need upload progress events.
+// onProgress(loaded, total) fires as bytes are sent.
+function upload(path, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', BASE + path)
+    const token = getToken()
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total)
+      })
+    }
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (xhr.status === 204) return resolve(null)
+        try { resolve(JSON.parse(xhr.responseText)) } catch { resolve(null) }
+      } else {
+        const err = new Error(xhr.responseText || xhr.statusText)
+        err.status = xhr.status
+        reject(err)
+      }
+    })
+    xhr.addEventListener('error', () => reject(new Error('Network error')))
+    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')))
+    xhr.send(formData)
+  })
+}
+
 export const api = {
   register: (data) => req('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
   login: (data) => req('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
@@ -32,7 +61,7 @@ export const api = {
   createApp: (data) => req('/admin/apps', { method: 'POST', body: JSON.stringify(data) }),
   updateApp: (id, data) => req(`/admin/apps/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   uploadIcon: (id, form) => req(`/admin/apps/${id}/icon`, { method: 'POST', body: form }),
-  uploadChunk: (appId, form) => req(`/admin/apps/${appId}/files/chunk`, { method: 'POST', body: form }),
+  uploadChunk: (appId, form, onProgress) => upload(`/admin/apps/${appId}/files/chunk`, form, onProgress),
   deleteApp: (id) => req(`/admin/apps/delete/${id}`, { method: 'DELETE' }),
   deleteRelease: (id) => req(`/admin/releases/${id}`, { method: 'DELETE' }),
 
